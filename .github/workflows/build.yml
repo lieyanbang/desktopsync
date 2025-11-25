@@ -16,16 +16,48 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Locate Visual Studio toolchain
+        shell: pwsh
+        run: |
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vsWhere)) {
+            throw "vswhere.exe not found at $vsWhere"
+          }
+          $vsInstall = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstall) {
+            throw "Unable to locate a Visual Studio installation with C++ tools."
+          }
+          $vcVars = Join-Path $vsInstall 'VC\Auxiliary\Build\vcvarsall.bat'
+          if (-not (Test-Path $vcVars)) {
+            throw "vcvarsall.bat not found at $vcVars"
+          }
+          "VS_BAT=$vcVars" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build binaries
         run: build.bat
         shell: cmd
+
+      - name: Package build outputs
+        shell: pwsh
+        run: |
+          $artifactDir = "artifacts"
+          if (Test-Path $artifactDir) {
+            Remove-Item -Recurse -Force $artifactDir
+          }
+          New-Item -ItemType Directory -Path $artifactDir | Out-Null
+          $files = Get-ChildItem -Path . -Include *.exe,*.dll,*.lib,*.exp -File
+          if (-not $files) {
+            throw "No build outputs were produced."
+          }
+          $files | Copy-Item -Destination $artifactDir -Force
+          $zipPath = "desktopsync-build.zip"
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath
+          }
+          Compress-Archive -Path "$artifactDir\*" -DestinationPath $zipPath
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: desktopsync-windows
-          path: |
-            *.exe
-            *.dll
-            *.lib
-            *.exp
+          path: desktopsync-build.zip
